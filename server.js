@@ -1,110 +1,142 @@
 var restify = require('restify');
 var builder = require('botbuilder');
+// var request = require('request');
 
 
-// Create bot and add dialogs
-var bot = new builder.BotConnectorBot({ appId: process.env.APP_ID, appSecret: process.env.APP_SECRET });
+var connector = new builder.ChatConnector({
+    appId: process.env.APP_ID,
+    appPassword: process.env.APP_SECRET
+});
+
+var bot = new builder.UniversalBot(connector);
+
+// Setup Restify Server
+var server = restify.createServer();
+server.post('/api/messages', connector.listen());
+server.listen(process.env.port || 3978, function () {
+    console.log('%s listening to %s', server.name, server.url);
+    console.log("LUIS URL :" + process.env.LUIS_URL);
+});
 
 
-var dialog = new builder.LuisDialog(process.env.LUIS_URL);
-bot.add('/', dialog);
+// Create LUIS recognizer that points at our model and add it as the root '/' dialog for our Cortana Bot.
+var model = process.env.LUIS_URL;
+console.log("LUIS URL :" + process.env.LUIS_URL);
+var recognizer = new builder.LuisRecognizer(model);
+var dialog = new builder.IntentDialog({ recognizers: [recognizer] });
+bot.dialog('/', dialog);
+// dialog.re
 
-
-dialog.on('Greeting', [
-    function (session, args) {
-       
-        // builder.Prompts.text(session, "Hello There! How may I help you, I can help you in viewing available report types, and in requesting generation or particular reports"); //values to be read from JSON and shown
-        // builder.Message.text(session, "Hello There! How may I help you, I can help you in viewing available report types, and in requesting generation or particular reports");
-       session.send("Hello There! How may I help you, I can help you in viewing available report types, and in requesting generation or particular reports");
+dialog.matches('Greeting', [
+    function (session) {
+        session.send(process.env.GREETING_MESSAGE);
     }
+
 ]);
 
-dialog.on('ShowReportTypes', [
-    function (session, args) {
-       
-        // builder.Message.text(session, "You can generate the following reports : 1,2,3"); //values to be read from JSON and shown
-        session.send("You can generate the following reports : 1- Profile Report, 2-Trend Report");
-       
-    }
-]);
 
-dialog.on('GenerateReport', [
+dialog.matches('WhatToSell', [
+
     function (session, args, next) {
-        var reportType = builder.EntityRecognizer.findEntity(args.entities, 'ReportType');
-        var reportParams = session.dialogData.reportParams = {
-          reportType: reportType ? reportType.entity : null,
-          openCount : null,
-          sentCount : null,
-          subjectLine : null,
-          
-        };
-        
-        if (!reportParams.reportType) {
-            // builder.Message.text(session, "Could not Identify which report you want to generate");
-            builder.Prompts.text(session, "Could not Identify Report Name. You can generate the following reports : 1- Profile Report, 2-Trend Report");
-        } 
+       
+        session.dialogData.location = "";
+        session.dialogData.product = "";
+        session.dialogData.timeRange = "";
+        session.send("You want to find what you can sell :");
+        if (builder.EntityRecognizer.findEntity(args.entities, 'Location')) {
+            // session.send("Setting Location");
+            session.dialogData.location = builder.EntityRecognizer.findEntity(args.entities, 'Location').entity;
+            //    session.send("Setting Location");
+        }
+        if (builder.EntityRecognizer.findEntity(args.entities, 'TimeRange')) {
+            //   session.send("Setting TimeRange");
+            session.dialogData.timeRange = builder.EntityRecognizer.findEntity(args.entities, 'TimeRange').entity;
+        }
+        if (builder.EntityRecognizer.findEntity(args.entities, 'Product')) {
+            //   session.send("Setting Product");
+            session.dialogData.product = builder.EntityRecognizer.findEntity(args.entities, 'Product').entity;
+        }
+
+        if (!session.dialogData.location) {
+            builder.Prompts.choice(session, "Please select the location", ["Mumbai", "Pune", "Maharashtra", "India"]);
+        }
         else {
             next();
         }
-    },
-    function (session, args, next) {
-        var reportParams = session.dialogData.reportParams;
-        if (reportParams.reportType && !reportParams.openCount) {
-            builder.Prompts.text(session,"Set OpenCount");
-        }
-        else{
-            next();
-        }
+       
     },
     function (session, results, next) {
-        var reportParams = session.dialogData.reportParams;
-        if (results.response) {
-           reportParams.openCount = results.response;
-        }
 
-        if (reportParams.reportType && reportParams.openCount && !reportParams.sentCount) {
-            builder.Prompts.text(session,"Set SentCount");
+        if (results.response) {
+            session.dialogData.location = results.response.entity;
         }
-        else{
+      
+        if (!session.dialogData.timeRange) {
+            builder.Prompts.choice(session, "Please select the time range", ["yesterday", "this week", "last week", "last month"]);
+        }
+        else {
             next();
         }
+
+
+
     },
     function (session, results, next) {
-        var reportParams = session.dialogData.reportParams;
+
         if (results.response) {
-           reportParams.sentCount = results.response;
+            console.log(results.response);
+            session.dialogData.timeRange = results.response.entity;
         }
 
-        if (reportParams.reportType && reportParams.openCount && reportParams.sentCount && !reportParams.subjectLine) {
-            builder.Prompts.text(session,"Set Subject Line");
+        if (!session.dialogData.product) {
+            builder.Prompts.text(session, "Please select a product");
+
         }
-        else{
+        else {
             next();
         }
+        // next();
     },
     function (session, results, next) {
-        var reportParams = session.dialogData.reportParams;
-        if (results.response) {
-           reportParams.subjectLine = results.response;
-        }
 
-        if (reportParams.reportType && reportParams.openCount && reportParams.sentCount && reportParams.subjectLine) {
-            builder.Prompts.text(session,"Creating "+reportParams.reportType+" report with Sent Count-"+reportParams.sentCount+", Open Count-"+reportParams.openCount+" and Subject Line-"+reportParams.subjectLine);
+        if (results.response) {
+            session.dialogData.product = results.response;
         }
-        else{
-            next();
+        next();
+
+    },
+
+    function (session) {
+
+        if (session.dialogData.location && session.dialogData.timeRange && session.dialogData.product) {
+            session.send("You want to generate the What to Sell report for Product : " + session.dialogData.product +
+                " Location : " + session.dialogData.location +
+                " Time Range : " + session.dialogData.timeRange);
         }
     }
-    
+
 ]);
 
 
+dialog.onDefault(builder.DialogAction.send("I'm sorry. I didn't understand."));
 
+// dialog.onDefault([
+// function(session, args, next) {
+//     request({
+//         uri : "https://www.bing.com",
+//         method : "GET",
+//         json : true,
+//     }, function(error, response, jbody){
+//         if(error) {
+//             console.log(error);
+//         }
+//         next();
+//     })
+// },
+//  function (session) {
 
-dialog.onDefault(builder.DialogAction.send("I'm sorry. You can generate the following reports : 1- Profile Report, 2-Trend Report"));
-
-var server = restify.createServer();
-server.post('/api/messages', bot.verifyBotFramework(), bot.listen());
-server.listen(process.env.port || 3978, function () {
-    console.log('%s listening to %s', server.name, server.url);
-});
+       
+//             session.send("Next Function executed " );
+//         }
+    
+// ]);
